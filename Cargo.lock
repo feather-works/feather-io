@@ -409,6 +409,7 @@ dependencies = [
 [[package]]
 name = "falcao-bytecode"
 version = "0.1.0"
+source = "git+https://github.com/feather-works/falcao?tag=v0.1.0#51bbd5bac4fde97f13206f29461588c068c67c27"
 dependencies = [
  "falcao-sintaxe",
 ]
@@ -416,6 +417,7 @@ dependencies = [
 [[package]]
 name = "falcao-runtime"
 version = "0.1.0"
+source = "git+https://github.com/feather-works/falcao?tag=v0.1.0#51bbd5bac4fde97f13206f29461588c068c67c27"
 dependencies = [
  "falcao-bytecode",
  "falcao-sintaxe",
@@ -424,6 +426,7 @@ dependencies = [
 [[package]]
 name = "falcao-sintaxe"
 version = "0.1.0"
+source = "git+https://github.com/feather-works/falcao?tag=v0.1.0#51bbd5bac4fde97f13206f29461588c068c67c27"
 
 [[package]]
 name = "fast-float2"
