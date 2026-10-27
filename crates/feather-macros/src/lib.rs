@@ -201,13 +201,29 @@ const MAX_OPERACOES: usize = 20_000_000;
 /// de função nativa (`Array.forEach`, `sort`) não cede a vez; um botão
 /// "Parar" pede a macro em outra thread.
 pub const PRAZO: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// O prazo da execução e um sinal para parar. Quem roda a macro noutra thread (a janela
+/// continua respondendo) pode dar mais tempo e oferecer um botão "Parar".
+#[derive(Clone, Debug)]
+pub struct Limites {
+    pub prazo: std::time::Duration,
+    /// Ligado por outra thread: a macro para na próxima olhada no relógio.
+    pub parar: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl Default for Limites {
+    fn default() -> Self {
+        Self { prazo: PRAZO, parar: None }
+    }
+}
 /// "Ciclos" da VM do Boa entre duas olhadas no relógio.
 const CICLOS_ENTRE_OLHADAS: u32 = 100_000;
 
 /// Roda `script` em passos (`evaluate_async_with_budget`) e o abandona quando
 /// passa do `prazo`. O contexto não serve para mais nada depois disso; quem
 /// chama o descarta.
-fn avaliar_com_prazo(script: &Script, contexto: &mut Context, prazo: std::time::Duration) -> JsResult<JsValue> {
+fn avaliar_com_prazo(script: &Script, contexto: &mut Context, limites: &Limites) -> JsResult<JsValue> {
+    let prazo = limites.prazo;
     use std::{future::Future, task::{Context as Tarefa, Poll, Waker}};
     let inicio = std::time::Instant::now();
     let mut futuro = std::pin::pin!(script.evaluate_async_with_budget(contexto, CICLOS_ENTRE_OLHADAS));
@@ -215,6 +231,9 @@ fn avaliar_com_prazo(script: &Script, contexto: &mut Context, prazo: std::time::
     loop {
         match futuro.as_mut().poll(&mut tarefa) {
             Poll::Ready(r) => return r,
+            Poll::Pending if limites.parar.as_ref().is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed)) => {
+                return Err(erro("A macro foi parada a pedido"));
+            }
             Poll::Pending if inicio.elapsed() > prazo => {
                 return Err(erro(format!(
                     "A macro passou de {} s e foi parada: ela pode estar presa num laço sem fim",
@@ -281,15 +300,16 @@ pub fn executar_com_origem(
     codigo: &str,
     origem: Option<&str>,
 ) -> Resultado {
-    executar_com_prazo(host, bootstrap, codigo, origem, PRAZO)
+    executar_com_limites(host, bootstrap, codigo, origem, &Limites::default())
 }
 
-fn executar_com_prazo(
+/// Igual a [`executar_com_origem`], com outro prazo e o sinal de parar.
+pub fn executar_com_limites(
     host: Rc<dyn HospedeiroMacros>,
     bootstrap: &str,
     codigo: &str,
     origem: Option<&str>,
-    prazo: std::time::Duration,
+    limites: &Limites,
 ) -> Resultado {
     let mut contexto = Context::default();
     contexto.runtime_limits_mut().set_loop_iteration_limit(MAX_VOLTAS);
@@ -312,7 +332,7 @@ fn executar_com_prazo(
                 Script::parse(Source::from_bytes(codigo), None, &mut contexto)?
             }
         };
-        let valor = avaliar_com_prazo(&script, &mut contexto, prazo)?;
+        let valor = avaliar_com_prazo(&script, &mut contexto, limites)?;
         if valor.as_object().is_some_and(|obj| {
             boa_engine::object::builtins::JsPromise::from_object(obj).is_ok()
         }) {
@@ -366,13 +386,29 @@ mod testes {
     #[test]
     fn lacos_aninhados_sem_fim_param_no_prazo() {
         let inicio = std::time::Instant::now();
-        let r = executar_com_prazo(Rc::new(HospedeiroDeTeste), "",
+        let r = executar_com_limites(Rc::new(HospedeiroDeTeste), "",
             "for (let i = 0; i < 1e7; i++) { for (let j = 0; j < 1e7; j++) {} }", None,
-            std::time::Duration::from_millis(300));
+            &Limites { prazo: std::time::Duration::from_millis(300), parar: None });
         assert!(r.erro.as_deref().is_some_and(|e| e.contains("foi parada")), "{:?}", r.erro);
         assert!(inicio.elapsed() < std::time::Duration::from_secs(5));
         // Macro curta continua igual, com o resultado e o log.
         assert!(rodar("let s = 0; for (let i = 0; i < 1000; i++) s += i; log(String(s));").saida == vec!["499500"]);
+    }
+
+    #[test]
+    fn o_sinal_de_parar_interrompe_a_macro_de_outra_thread() {
+        let parar = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sinal = parar.clone();
+        let botao = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            sinal.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        let inicio = std::time::Instant::now();
+        let r = executar_com_limites(Rc::new(HospedeiroDeTeste), "", "while (true) {}", None,
+            &Limites { prazo: std::time::Duration::from_secs(60), parar: Some(parar) });
+        botao.join().unwrap();
+        assert!(r.erro.as_deref().is_some_and(|e| e.contains("parada a pedido")), "{:?}", r.erro);
+        assert!(inicio.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]
