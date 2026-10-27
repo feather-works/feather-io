@@ -15,6 +15,9 @@ use serde_json::Value as Json;
 use serde_json::json;
 use std::{cell::{Cell, RefCell}, collections::BTreeSet, path::{Path, PathBuf}, rc::Rc};
 
+#[cfg(feature = "falcao")]
+mod falcao;
+
 /// Adaptador de comandos que um produto autoriza suas macros a executar.
 ///
 /// A biblioteca geral não conhece a estrutura dos documentos e não oferece
@@ -311,6 +314,9 @@ pub fn executar_com_limites(
     origem: Option<&str>,
     limites: &Limites,
 ) -> Resultado {
+    #[cfg(feature = "falcao")]
+    { let _ = origem; return falcao::executar(host, bootstrap, codigo, limites); }
+    #[allow(unreachable_code)]
     let mut contexto = Context::default();
     contexto.runtime_limits_mut().set_loop_iteration_limit(MAX_VOLTAS);
     contexto.runtime_limits_mut().set_recursion_limit(64);
