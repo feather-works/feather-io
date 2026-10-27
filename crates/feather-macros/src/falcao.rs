@@ -36,7 +36,7 @@ fn chamada(m: &mut Motor, _: Valor, a: Args, _: Valor) -> Res<Valor> {
     }
 }
 
-pub fn executar(host: Rc<dyn HospedeiroMacros>, bootstrap: &str, codigo: &str, limites: &Limites) -> Resultado {
+pub fn executar(host: Rc<dyn HospedeiroMacros>, bootstrap: &str, codigo: &str, origem: Option<&str>, limites: &Limites) -> Resultado {
     let mut m = Motor::novo();
     let (inicio, prazo, parar) = (std::time::Instant::now(), limites.prazo, limites.parar.clone());
     m.interromper = Some(Box::new(move || {
@@ -54,8 +54,9 @@ pub fn executar(host: Rc<dyn HospedeiroMacros>, bootstrap: &str, codigo: &str, l
     let chave = m.chave("__ft");
     m.definir_propria(global, chave, f, 0);
     let mut r = Ok(Valor::UNDEFINED);
-    for fonte in [API_COMUM, bootstrap, codigo] {
-        r = m.avaliar(fonte);
+    // Com `origem`, a pilha diz `api:L:C` no prelúdio e `<origem>:L:C` no código, como no Boa.
+    for (fonte, nome) in [(API_COMUM, None), (bootstrap, origem.map(|_| "api")), (codigo, origem)] {
+        r = match nome { Some(n) => m.avaliar_com_nome(fonte, n), None => m.avaliar(fonte) };
         if r.is_err() { break; }
     }
     let erro = r.err().map(|e| mensagem_de_erro(m.texto_do_erro(e)));

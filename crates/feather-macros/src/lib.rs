@@ -315,7 +315,7 @@ pub fn executar_com_limites(
     limites: &Limites,
 ) -> Resultado {
     #[cfg(feature = "falcao")]
-    { let _ = origem; return falcao::executar(host, bootstrap, codigo, limites); }
+    { return falcao::executar(host, bootstrap, codigo, origem, limites); }
     #[allow(unreachable_code)]
     let mut contexto = Context::default();
     contexto.runtime_limits_mut().set_loop_iteration_limit(MAX_VOLTAS);
