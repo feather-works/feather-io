@@ -6,7 +6,7 @@
 //! legado é metadado e nunca dispara execução dentro desta biblioteca.
 
 use boa_engine::{
-    js_string, Context, JsArgs, JsData, JsNativeError, JsResult, JsValue, NativeFunction, Source,
+    js_string, Context, JsArgs, JsData, JsNativeError, JsResult, JsValue, NativeFunction, Script, Source,
 };
 use boa_gc::{Finalize, Trace};
 use serde::{Deserialize, Serialize};
@@ -192,10 +192,38 @@ struct Ponte {
 /// Voltas de um laço e chamadas ao host numa macro. Protegem contra
 /// `while(true)` (a macro roda na thread da janela), mas precisam caber uma
 /// macro que percorra as linhas de uma planilha grande.
-/// shortcut: um laço infinito ainda congela a janela alguns segundos até o
-/// limite; trocar por execução em outra thread com botão "Parar" quando houver.
 const MAX_VOLTAS: u64 = 20_000_000;
 const MAX_OPERACOES: usize = 20_000_000;
+
+/// Tempo máximo do código da macro. O limite de voltas é por laço: dois
+/// laços aninhados (20 milhões × 20 milhões) congelavam a janela para sempre.
+/// shortcut: a janela fica parada até o prazo, e um laço dentro de callback
+/// de função nativa (`Array.forEach`, `sort`) não cede a vez; um botão
+/// "Parar" pede a macro em outra thread.
+pub const PRAZO: std::time::Duration = std::time::Duration::from_secs(30);
+/// "Ciclos" da VM do Boa entre duas olhadas no relógio.
+const CICLOS_ENTRE_OLHADAS: u32 = 100_000;
+
+/// Roda `script` em passos (`evaluate_async_with_budget`) e o abandona quando
+/// passa do `prazo`. O contexto não serve para mais nada depois disso; quem
+/// chama o descarta.
+fn avaliar_com_prazo(script: &Script, contexto: &mut Context, prazo: std::time::Duration) -> JsResult<JsValue> {
+    use std::{future::Future, task::{Context as Tarefa, Poll, Waker}};
+    let inicio = std::time::Instant::now();
+    let mut futuro = std::pin::pin!(script.evaluate_async_with_budget(contexto, CICLOS_ENTRE_OLHADAS));
+    let mut tarefa = Tarefa::from_waker(Waker::noop());
+    loop {
+        match futuro.as_mut().poll(&mut tarefa) {
+            Poll::Ready(r) => return r,
+            Poll::Pending if inicio.elapsed() > prazo => {
+                return Err(erro(format!(
+                    "A macro passou de {} s e foi parada: ela pode estar presa num laço sem fim",
+                    prazo.as_secs())));
+            }
+            Poll::Pending => {}
+        }
+    }
+}
 
 fn erro(msg: impl Into<String>) -> boa_engine::JsError {
     JsNativeError::typ().with_message(msg.into()).into()
@@ -253,6 +281,16 @@ pub fn executar_com_origem(
     codigo: &str,
     origem: Option<&str>,
 ) -> Resultado {
+    executar_com_prazo(host, bootstrap, codigo, origem, PRAZO)
+}
+
+fn executar_com_prazo(
+    host: Rc<dyn HospedeiroMacros>,
+    bootstrap: &str,
+    codigo: &str,
+    origem: Option<&str>,
+    prazo: std::time::Duration,
+) -> Resultado {
     let mut contexto = Context::default();
     contexto.runtime_limits_mut().set_loop_iteration_limit(MAX_VOLTAS);
     contexto.runtime_limits_mut().set_recursion_limit(64);
@@ -264,16 +302,17 @@ pub fn executar_com_origem(
             js_string!("__ft"), 2, NativeFunction::from_fn_ptr(chamada),
         )?;
         contexto.eval(Source::from_bytes(API_COMUM))?;
-        let valor = match origem {
+        let script = match origem {
             Some(origem) => {
                 contexto.eval(Source::from_bytes(bootstrap).with_path(Path::new("api")))?;
-                contexto.eval(Source::from_bytes(codigo).with_path(Path::new(origem)))?
+                Script::parse(Source::from_bytes(codigo).with_path(Path::new(origem)), None, &mut contexto)?
             }
             None => {
                 contexto.eval(Source::from_bytes(bootstrap))?;
-                contexto.eval(Source::from_bytes(codigo))?
+                Script::parse(Source::from_bytes(codigo), None, &mut contexto)?
             }
         };
+        let valor = avaliar_com_prazo(&script, &mut contexto, prazo)?;
         if valor.as_object().is_some_and(|obj| {
             boa_engine::object::builtins::JsPromise::from_object(obj).is_ok()
         }) {
@@ -322,6 +361,18 @@ mod testes {
     }
     fn rodar(codigo: &str) -> Resultado {
         executar(Rc::new(HospedeiroDeTeste), "", codigo)
+    }
+
+    #[test]
+    fn lacos_aninhados_sem_fim_param_no_prazo() {
+        let inicio = std::time::Instant::now();
+        let r = executar_com_prazo(Rc::new(HospedeiroDeTeste), "",
+            "for (let i = 0; i < 1e7; i++) { for (let j = 0; j < 1e7; j++) {} }", None,
+            std::time::Duration::from_millis(300));
+        assert!(r.erro.as_deref().is_some_and(|e| e.contains("foi parada")), "{:?}", r.erro);
+        assert!(inicio.elapsed() < std::time::Duration::from_secs(5));
+        // Macro curta continua igual, com o resultado e o log.
+        assert!(rodar("let s = 0; for (let i = 0; i < 1000; i++) s += i; log(String(s));").saida == vec!["499500"]);
     }
 
     #[test]

@@ -444,14 +444,14 @@ source = "git+https://github.com/feather-works/feather-draw?tag=v0.1.1#17404b4da
 
 [[package]]
 name = "feather-image"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "image",
 ]
 
 [[package]]
 name = "feather-io"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "feather-charts",
  "feather-draw",
@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "feather-macros"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "boa_engine",
  "boa_gc",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "feather-tables"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "fixedbitset"
