@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-feather-charts = { git = "https://github.com/feather-works/feather-charts", tag = "v0.3.2" }
+feather-charts = { git = "https://github.com/feather-works/feather-charts", tag = "v0.3.4" }
 feather-tables = { path = "../feather-tables" }
 feather-image = { path = "../feather-image" }
 feather-draw = { git = "https://github.com/feather-works/feather-draw", tag = "v0.1.1" }
